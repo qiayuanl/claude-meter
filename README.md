@@ -57,3 +57,7 @@ whose reset time has passed counts as 0 %.
 
 State lives in `~/Library/Application Support/ClaudeMeter/state.json` (no secrets). A file
 that cannot be decoded is renamed to `state.json.bad` and the app starts fresh.
+
+## License
+
+GPL-3.0. See [LICENSE](LICENSE).
