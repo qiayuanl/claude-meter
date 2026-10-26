@@ -8,7 +8,7 @@ TEST_FLAGS := $(if $(filter $(CLT),$(shell xcode-select -p)),\
 	-Xswiftc -Xfrontend -Xswiftc -disable-cross-import-overlays \
 	-Xlinker -rpath -Xlinker $(CLT_FRAMEWORKS))
 
-.PHONY: build test app install
+.PHONY: build test app install previews
 
 build:
 	swift build
@@ -21,3 +21,9 @@ app:
 
 install:
 	scripts/build-app.sh --install
+
+# README images of fictional accounts: docs/popover-light.png, docs/popover-dark.png, docs/menubar.png.
+previews:
+	swift build
+	mkdir -p docs
+	"$$(swift build --show-bin-path)/ClaudeMeter" --render-previews docs

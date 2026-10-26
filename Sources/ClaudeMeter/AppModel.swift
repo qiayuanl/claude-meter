@@ -6,7 +6,7 @@ import Observation
 /// A usage probe runs `claude -p /usage`; an identity check runs `claude auth status`.
 @MainActor @Observable
 final class AppModel {
-    private(set) var state = AppState.load() { didSet { try? state.save() } }
+    private(set) var state: AppState { didSet { try? state.save() } }
     /// Latest result per account. A result without a snapshot keeps the previous snapshot.
     private(set) var results: [UUID: ProbeResult] = [:]
     /// Accounts that get no usage probes before the given time. In memory only.
@@ -32,6 +32,7 @@ final class AppModel {
     /// At launch: identities, then usage of every account. Every 5 s: the session files, sign-in checks
     /// while the Add Account sheet is open, and a probe of all 5 min after the last one.
     init() {
+        state = AppState.load()
         AccountSetup.removeLoginScripts()
         currentID = state.lastCurrentAccountID
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
@@ -50,6 +51,14 @@ final class AppModel {
                 probeAll(atMostEvery: 300)
             }
         }
+    }
+
+    /// Fixed data for preview images: no files, timers or `claude` children.
+    init(demo state: AppState, results: [UUID: ProbeResult], currentID: UUID?, now: Date) {
+        self.state = state
+        self.results = results
+        self.currentID = currentID
+        self.now = now
     }
 
     /// Accounts with a job queued or running.

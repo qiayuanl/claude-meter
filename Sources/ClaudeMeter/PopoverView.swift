@@ -4,6 +4,8 @@ import SwiftUI
 
 struct PopoverView: View {
     let model: AppModel
+    /// Lays out every account without a scroll view, for ImageRenderer.
+    var forImage = false
     @Environment(\.openSettings) private var openSettings
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var listHeight: CGFloat = 120
@@ -20,21 +22,25 @@ struct PopoverView: View {
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
             Divider()
-            ScrollView {
-                VStack(spacing: 0) {
-                    if model.state.accounts.isEmpty {
-                        Text("No accounts. Choose Add Account… to start.")
-                            .foregroundStyle(.secondary).padding(.vertical, 10)
-                    }
-                    ForEach(Array(model.popoverAccounts.enumerated()), id: \.element.id) { index, account in
-                        if index > 0 { Divider() }
-                        AccountSection(model: model, account: account).padding(.vertical, 10)
-                    }
+            let list = VStack(spacing: 0) {
+                if model.state.accounts.isEmpty {
+                    Text("No accounts. Choose Add Account… to start.")
+                        .foregroundStyle(.secondary).padding(.vertical, 10)
                 }
-                .padding(.horizontal, 14)
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
+                ForEach(Array(model.popoverAccounts.enumerated()), id: \.element.id) { index, account in
+                    if index > 0 { Divider() }
+                    AccountSection(model: model, account: account).padding(.vertical, 10)
+                }
             }
-            .frame(height: min(listHeight, 560))
+            .padding(.horizontal, 14)
+            if forImage {
+                list
+            } else {
+                ScrollView {
+                    list.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
+                }
+                .frame(height: min(listHeight, 560))
+            }
             Divider()
             HStack(spacing: 14) {
                 Button("Add Account…") {
@@ -47,7 +53,6 @@ struct PopoverView: View {
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
         }
-        .buttonStyle(.borderless)
         .frame(width: 340)
     }
 
@@ -142,8 +147,12 @@ struct LimitRow: View {
         let percent = limit.percent(at: now)
         HStack(spacing: 8) {
             Text(title).lineLimit(1).frame(width: 52, alignment: .leading).help(title)
-            ProgressView(value: min(max(percent, 0), 100), total: 100)
-                .progressViewStyle(.linear).controlSize(.small).tint(warningColor(percent) ?? .accentColor)
+            Capsule().fill(.quaternary).frame(height: 5).overlay(alignment: .leading) {
+                GeometryReader { bar in
+                    Capsule().fill(warningColor(percent) ?? .accentColor)
+                        .frame(width: bar.size.width * min(max(percent, 0), 100) / 100)
+                }
+            }
             Text("\(Int(percent.rounded()))%").monospacedDigit().frame(width: 38, alignment: .trailing)
             Text(reset).font(.caption).foregroundStyle(.secondary).lineLimit(1).frame(width: 84, alignment: .leading)
         }

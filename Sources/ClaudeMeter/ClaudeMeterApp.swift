@@ -15,6 +15,10 @@ enum Entry {
             Task { exit(await probeOnce(folder: args[i + 1]) ? 0 : 1) }
             dispatchMain()
         }
+        if let i = args.firstIndex(of: "--render-previews"), i + 1 < args.count {
+            do { try Previews.render(to: URL(filePath: args[i + 1])) } catch { print(error); exit(1) }
+            exit(0)
+        }
         ClaudeMeterApp.main()
     }
 
@@ -36,7 +40,7 @@ struct ClaudeMeterApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            PopoverView(model: model)
+            PopoverView(model: model).buttonStyle(.borderless)
         } label: {
             MenuBarLabel(model: model)
         }

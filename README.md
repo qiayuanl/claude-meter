@@ -1,5 +1,12 @@
 # ClaudeMeter
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/popover-dark.png">
+  <img src="docs/popover-light.png" alt="ClaudeMeter popover with four accounts" width="340">
+</picture>
+
+<img src="docs/menubar.png" alt="Menu bar label at 42 %, 86 % and 97 %" width="218">
+
 A macOS menu bar app that shows Claude subscription usage (session and weekly limits) for
 several Claude Code accounts. The same email in two organizations counts as two accounts.
 
@@ -21,6 +28,8 @@ make install   # copies the app to /Applications and registers it
 
 `ClaudeMeter --probe-once <folder>` probes one account folder, prints the parsed result as
 JSON and exits with status 1 when the probe failed. Each run is a real `/usage` request.
+`make previews` writes the images above from fictional accounts
+(`ClaudeMeter --render-previews docs`).
 
 ## Accounts
 

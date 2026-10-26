@@ -4,6 +4,10 @@ import Foundation
 public struct Identity: Codable, Sendable, Equatable {
     public var email, orgId, orgName, subscriptionType: String?
 
+    public init(email: String? = nil, orgId: String? = nil, orgName: String? = nil, subscriptionType: String? = nil) {
+        (self.email, self.orgId, self.orgName, self.subscriptionType) = (email, orgId, orgName, subscriptionType)
+    }
+
     /// Accounts are distinct per email and organization.
     public var key: String? {
         guard let email, !email.isEmpty else { return nil }
@@ -38,6 +42,10 @@ public struct UsageLimit: Codable, Sendable, Equatable {
     public var model: String?
     public var isActive = false
 
+    public init(kind: String, percent: Double, resetsAt: Date? = nil, model: String? = nil, isActive: Bool = false) {
+        (self.kind, self.percent, self.resetsAt, self.model, self.isActive) = (kind, percent, resetsAt, model, isActive)
+    }
+
     /// Percent used at `now`: 0 once the reset time has passed.
     public func percent(at now: Date) -> Double {
         if let resetsAt, resetsAt <= now { return 0 }
@@ -58,6 +66,10 @@ public struct UsageSnapshot: Codable, Sendable, Equatable {
     public var extraUsage: ExtraUsage?
     /// When Anthropic produced the numbers. Claude Code can serve a cached copy.
     public var asOf: Date
+
+    public init(limits: [UsageLimit], extraUsage: ExtraUsage? = nil, asOf: Date) {
+        (self.limits, self.extraUsage, self.asOf) = (limits, extraUsage, asOf)
+    }
 
     public var session: UsageLimit? { limits.first { $0.kind == "session" } }
     public var weekly: UsageLimit? { limits.first { $0.kind == "weekly_all" } }
