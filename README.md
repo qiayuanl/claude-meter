@@ -54,11 +54,14 @@ warns when two accounts are signed in as the same email and organization.
 ## Which account is in use
 
 Every 5 s ClaudeMeter reads `<folder>/sessions/<pid>.json` in each account folder and in
-`~/.claude`, where plain `claude` runs. A session counts while its process is alive. A
-folder's sessions belong to the account that matches the folder's current login (the email
-and organization in `.claude.json` inside the folder, or `~/.claude.json` for `~/.claude`),
-so switching with `/login` is followed. The session updated last decides; without a live
-session the last account in use stays.
+`~/.claude`, where plain `claude` runs. A session counts while its process is alive, and the
+session updated last decides; ClaudeMeter's own `claude` runs do not count. Sessions in an
+account folder belong to that account. Without a live session the last account in use stays.
+
+`~/.claude` follows `claude auth login` switches. Each refresh, and after every sign-in there,
+ClaudeMeter runs `/usage` for `~/.claude` and picks the account whose limits reset at the same
+times. The profile in `~/.claude.json` is only a fallback, because it can keep an old
+organization after a switch. That account's own folder is not probed in the same round.
 
 ## Data source and rate limits
 
@@ -70,10 +73,10 @@ claude auth status
 ```
 
 Anthropic allows about 30 usage requests per hour per account, so ClaudeMeter probes one
-account at a time, every account every 5 minutes, and on Refresh at most once per minute.
-After a "rate limited" answer it skips that account for 15 minutes. "Updated" in the tooltip
-is the time Claude Code fetched the numbers (`cachedUsageUtilization.fetchedAtMs`). A limit
-whose reset time has passed counts as 0 %.
+account at a time, every account and `~/.claude` every 5 minutes, and on Refresh at most once
+per minute. After a "rate limited" answer it skips that account for 15 minutes. "Updated" in
+the tooltip is the time Claude Code fetched the numbers (`cachedUsageUtilization.fetchedAtMs`).
+A limit whose reset time has passed counts as 0 %.
 
 State lives in `~/Library/Application Support/ClaudeMeter/state.json` (no secrets). A file
 that cannot be decoded is renamed to `state.json.bad` and the app starts fresh.

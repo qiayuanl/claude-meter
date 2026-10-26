@@ -51,8 +51,7 @@ enum Previews {
         state.accounts = demo.map { Account(name: $0.name, configDir: "", identity: $0.identity) }
         var results: [UUID: ProbeResult] = [:]
         for (account, d) in zip(state.accounts, demo) {
-            results[account.id] = ProbeResult()
-            results[account.id]?.snapshot = UsageSnapshot(limits: d.limits, asOf: now - 120)
+            results[account.id] = ProbeResult(snapshot: UsageSnapshot(limits: d.limits, asOf: now - 120))
         }
         return AppModel(demo: state, results: results, currentID: state.accounts[2].id, now: now)
     }

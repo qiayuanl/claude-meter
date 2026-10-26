@@ -40,13 +40,14 @@ public struct Claude: Sendable {
         return Claude(path: path)
     }
 
-    /// Every CLAUDE* variable and the API token variables removed, CLAUDE_CONFIG_DIR set, and
-    /// PATH led by the folder of `claude`, so a `#!/usr/bin/env node` script finds node.
+    /// Every CLAUDE* variable and the API token variables removed, CLAUDE_CONFIG_DIR set to the folder
+    /// (unset for ~/.claude, the CLI default), and PATH led by the folder of `claude`, so a
+    /// `#!/usr/bin/env node` script finds node.
     static func environment(base: [String: String], configDir: String, claude: String,
                             home: String) -> [String: String] {
         let removed: Set = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
         var env = base.filter { !$0.key.hasPrefix("CLAUDE") && !removed.contains($0.key) }
-        env["CLAUDE_CONFIG_DIR"] = configDir
+        if configDir != home + "/.claude" { env["CLAUDE_CONFIG_DIR"] = configDir }
         let claudeDir = (claude as NSString).deletingLastPathComponent
         env["PATH"] = ([claudeDir] + installDirectories(home: home) + ["/usr/bin", "/bin"]).joined(separator: ":")
         return env
@@ -59,7 +60,7 @@ public struct Claude: Sendable {
         do {
             let now = Date()
             var result = UsageParser.parse(try await runClaude(arguments, account), now: now)
-            if let fetched = GlobalConfig.read(account.configDir + "/.claude.json")?.usageFetchedAt {
+            if let fetched = GlobalConfig.read(account.globalConfigPath)?.usageFetchedAt {
                 result.snapshot?.asOf = min(fetched, now)
             }
             return result

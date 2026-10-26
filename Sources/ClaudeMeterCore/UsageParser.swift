@@ -54,20 +54,21 @@ public enum UsageParser {
 }
 
 /// The parts of a Claude Code global config file (`.claude.json`) the app reads.
-struct GlobalConfig: Decodable {
-    struct OAuthAccount: Decodable { var emailAddress: String?, organizationUuid: String? }
+public struct GlobalConfig: Decodable {
+    /// The signed-in profile. Changes on every sign-in, even with the same email and organization,
+    /// and when Claude Code refreshes the profile.
+    public struct OAuthAccount: Decodable, Equatable, Sendable {
+        var emailAddress: String?, organizationUuid: String?, profileFetchedAt: Double?
+        /// Identity key (see `Identity.key`) of the login.
+        public var key: String? { Identity(email: emailAddress, orgId: organizationUuid).key }
+    }
     struct UsageCache: Decodable { var fetchedAtMs: Double? }
-    var oauthAccount: OAuthAccount?
+    public var oauthAccount: OAuthAccount?
     var cachedUsageUtilization: UsageCache?
 
-    static func read(_ path: String) -> GlobalConfig? {
+    public static func read(_ path: String) -> GlobalConfig? {
         guard let data = FileManager.default.contents(atPath: path) else { return nil }
         return try? JSONDecoder().decode(GlobalConfig.self, from: data)
-    }
-
-    /// Identity key (see `Identity.key`) of the folder's current login. `/login` rewrites it.
-    var signedInKey: String? {
-        Identity(email: oauthAccount?.emailAddress, orgId: oauthAccount?.organizationUuid).key
     }
 
     /// When Claude Code last fetched the usage numbers it serves.

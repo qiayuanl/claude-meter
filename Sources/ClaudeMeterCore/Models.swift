@@ -18,8 +18,8 @@ public struct Identity: Codable, Sendable, Equatable {
     public var plan: String? { subscriptionType.map { $0.prefix(1).uppercased() + $0.dropFirst() } }
 }
 
-/// One Claude Code config folder. `configDir` is passed verbatim as CLAUDE_CONFIG_DIR, because
-/// Claude Code keys its Keychain item on that exact string.
+/// One Claude Code config folder. `configDir` is passed verbatim as CLAUDE_CONFIG_DIR (except for
+/// ~/.claude), because Claude Code keys its Keychain item on that exact string.
 public struct Account: Codable, Sendable, Identifiable, Equatable {
     public var id = UUID()
     public var name: String
@@ -30,6 +30,15 @@ public struct Account: Codable, Sendable, Identifiable, Equatable {
         self.name = name
         self.configDir = configDir
         self.identity = identity
+    }
+
+    /// The plain `claude` login in ~/.claude, switched with `claude auth login`. Not a tracked account:
+    /// its usage is matched to one by reset times. Its children run with CLAUDE_CONFIG_DIR unset.
+    public static let home = Account(name: "~/.claude", configDir: Paths.home + "/.claude")
+
+    /// Claude Code's global config file: inside the folder, or ~/.claude.json for ~/.claude.
+    public var globalConfigPath: String {
+        (configDir == Account.home.configDir ? Paths.home : configDir) + "/.claude.json"
     }
 }
 
@@ -83,6 +92,17 @@ public struct UsageSnapshot: Codable, Sendable, Equatable {
         [session, weekly].compactMap { $0?.percent(at: now) }.max()
     }
 
+    /// True when both snapshots likely come from one account: their session and weekly limits reset
+    /// at the same times (within 2 min, or both unset).
+    public func sameAccount(as other: UsageSnapshot) -> Bool {
+        func close(_ a: Date?, _ b: Date?) -> Bool {
+            guard let a, let b else { return a == nil && b == nil }
+            return abs(a.timeIntervalSince(b)) < 120
+        }
+        guard session?.resetsAt != nil || weekly?.resetsAt != nil else { return false }
+        return close(session?.resetsAt, other.session?.resetsAt) && close(weekly?.resetsAt, other.weekly?.resetsAt)
+    }
+
     /// When every limit at the tightest percent has reset. Nil when unknown or at 0 %.
     public func tightestResetsAt(at now: Date) -> Date? {
         guard let top = tightestPercent(at: now), top > 0 else { return nil }
@@ -99,9 +119,8 @@ public struct ProbeResult: Encodable, Sendable {
     /// The output said Claude Code's usage endpoint is rate limited.
     public var rateLimited = false
 
-    public init(error: String? = nil, signedOut: Bool = false) {
-        self.error = error
-        self.signedOut = signedOut
+    public init(snapshot: UsageSnapshot? = nil, error: String? = nil, signedOut: Bool = false) {
+        (self.snapshot, self.error, self.signedOut) = (snapshot, error, signedOut)
     }
 
     /// The snapshot for the menu bar and the sort order: nil after an error or when older than 30 min.

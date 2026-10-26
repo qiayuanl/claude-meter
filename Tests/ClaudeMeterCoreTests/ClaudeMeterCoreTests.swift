@@ -76,6 +76,12 @@ private func snapshot(session: Double, sessionReset: Date? = nil, weekly: Double
                         "PATH": "/Users/u/.nvm/bin:/Users/u/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"])
     }
 
+    @Test func homeLoginRunsWithoutConfigDir() {
+        let env = Claude.environment(base: ["CLAUDE_CONFIG_DIR": "/x"], configDir: "/Users/u/.claude",
+                                     claude: "/c/claude", home: "/Users/u")
+        #expect(env["CLAUDE_CONFIG_DIR"] == nil)
+    }
+
     @Test func runCapturesOutputWithoutWaitingForGrandchildrenAndTimesOut() async throws {
         let start = Date()
         #expect(try await Claude.runProcess("/bin/sh", ["-c", "printf out; printf err >&2; sleep 5 &"], env: [:], timeout: 5) == "outerr")
@@ -100,15 +106,15 @@ private func snapshot(session: Double, sessionReset: Date? = nil, weekly: Double
     ]
     var ids: [UUID] { accounts.map(\.id) }
 
-    func current(_ folders: [FolderSessions], last: UUID? = nil, alive: Set<Int32> = [1, 2, 3, 4]) -> UUID? {
-        SessionDetector.current(folders: folders, accounts: accounts, last: last, probeDir: "/probe",
-                                isAlive: alive.contains)
+    func current(_ sessions: [(id: UUID, session: LiveSession)], last: UUID? = nil,
+                 alive: Set<Int32> = [1, 2, 3, 4]) -> UUID? {
+        SessionDetector.current(sessions, accounts: accounts, last: last, probeDir: "/probe", isAlive: alive.contains)
     }
 
-    @Test func readsSignedInKeyFromGlobalConfig() throws {
+    @Test func readsProfileKeyFromGlobalConfig() throws {
         let json = #"{"numStartups":3,"oauthAccount":{"emailAddress":"Me@X.edu","organizationUuid":"org-1"}}"#
-        #expect(try JSONDecoder().decode(GlobalConfig.self, from: Data(json.utf8)).signedInKey == "me@x.edu|org-1")
-        #expect(try JSONDecoder().decode(GlobalConfig.self, from: Data("{}".utf8)).signedInKey == nil)
+        #expect(try JSONDecoder().decode(GlobalConfig.self, from: Data(json.utf8)).oauthAccount?.key == "me@x.edu|org-1")
+        #expect(try JSONDecoder().decode(GlobalConfig.self, from: Data("{}".utf8)).oauthAccount == nil)
     }
 
     @Test func readsOnlySessionFiles() throws {
@@ -122,28 +128,45 @@ private func snapshot(session: Double, sessionReset: Date? = nil, weekly: Double
         #expect(SessionDetector.read(dir: dir.path) == [LiveSession(pid: 41277, cwd: "/x", updatedAt: 1_792_972_814_118)])
     }
 
-    @Test func folderSessionsFollowItsCurrentLogin() {
-        let session = [LiveSession(pid: 1, cwd: "/p", updatedAt: 1)]
-        // ~/.claude signed in as B's identity counts for B; an unknown login there is dropped.
-        #expect(current([FolderSessions(accountID: nil, signedInKey: "me@x.edu|org-2", sessions: session)]) == ids[1])
-        #expect(current([FolderSessions(accountID: nil, signedInKey: "x@y.z|o", sessions: session)], last: ids[2]) == ids[2])
-        // A's folder switched to C's login with /login; without a known login it stays A's.
-        #expect(current([FolderSessions(accountID: ids[0], signedInKey: "alt@x.edu|org-1", sessions: session)]) == ids[2])
-        #expect(current([FolderSessions(accountID: ids[1], signedInKey: nil, sessions: session)]) == ids[1])
+    @Test func homeAccountIsMatchedElseProfile() {
+        let all = accounts + [Account(name: "No identity", configDir: "/f/d")]
+        func home(_ matched: UUID?, _ key: String?) -> UUID? {
+            SessionDetector.homeAccount(matched: matched, profileKey: key, in: all)
+        }
+        #expect(home(ids[0], "me@x.edu|org-2") == ids[0])
+        #expect(home(UUID(), "me@x.edu|org-2") == ids[1])
+        #expect(home(nil, "x@y.z|o") == nil && home(nil, nil) == nil)
     }
 
     @Test func latestLiveSessionWinsOutsideProbeDir() {
-        let folders = [
-            FolderSessions(accountID: ids[0], signedInKey: nil, sessions: [LiveSession(pid: 1, cwd: "/p", updatedAt: 100)]),
-            FolderSessions(accountID: ids[1], signedInKey: nil, sessions: [LiveSession(pid: 2, cwd: "/p", updatedAt: 300),
-                                                                          LiveSession(pid: 9, cwd: "/p", updatedAt: 900)]),
-            FolderSessions(accountID: ids[2], signedInKey: nil, sessions: [LiveSession(pid: 3, cwd: "/probe/", updatedAt: 800)]),
+        let sessions = [
+            (ids[0], LiveSession(pid: 1, cwd: "/p", updatedAt: 100)),
+            (ids[1], LiveSession(pid: 2, cwd: "/p", updatedAt: 300)),
+            (ids[1], LiveSession(pid: 9, cwd: "/p", updatedAt: 900)),
+            (ids[2], LiveSession(pid: 3, cwd: "/probe/", updatedAt: 800)),
         ]
-        #expect(current(folders) == ids[1])
-        #expect(current(folders, alive: [1]) == ids[0])
-        #expect(current(folders, last: ids[2], alive: []) == ids[2])
-        #expect(current(folders, last: UUID(), alive: []) == ids[0])
+        #expect(current(sessions) == ids[1])
+        #expect(current(sessions, alive: [1]) == ids[0])
+        #expect(current(sessions, last: ids[2], alive: []) == ids[2])
+        #expect(current(sessions, last: UUID(), alive: []) == ids[0])
         #expect(SessionDetector.isAlive(getpid()) && !SessionDetector.isAlive(0))
+    }
+}
+
+@Suite struct SameAccountTests {
+    let t = Date(timeIntervalSince1970: 1_800_000_000)
+    func snap(_ session: Date?, _ weekly: Date?) -> UsageSnapshot {
+        UsageSnapshot(limits: [UsageLimit(kind: "session", percent: 54, resetsAt: session),
+                               UsageLimit(kind: "weekly_all", percent: 26, resetsAt: weekly)], asOf: t)
+    }
+
+    @Test func matchesOnResetTimes() {
+        let home = snap(t, t.addingTimeInterval(86_400))
+        #expect(home.sameAccount(as: snap(t.addingTimeInterval(1), t.addingTimeInterval(86_399))))
+        #expect(!home.sameAccount(as: snap(t.addingTimeInterval(3_600), t.addingTimeInterval(86_400))))
+        #expect(!home.sameAccount(as: snap(nil, t.addingTimeInterval(86_400))))
+        #expect(snap(nil, t).sameAccount(as: snap(nil, t)))
+        #expect(!snap(nil, nil).sameAccount(as: snap(nil, nil)))
     }
 }
 
@@ -182,8 +205,7 @@ private func snapshot(session: Double, sessionReset: Date? = nil, weekly: Double
     }
 
     @Test func freshSnapshotNeedsNoErrorAndAtMost30Minutes() {
-        var result = ProbeResult()
-        result.snapshot = snapshot(session: 5, weekly: 1)
+        var result = ProbeResult(snapshot: snapshot(session: 5, weekly: 1))
         #expect(result.fresh(at: reset + 1800) != nil && result.fresh(at: reset + 1801) == nil)
         result.error = "boom"
         #expect(result.fresh(at: reset) == nil)

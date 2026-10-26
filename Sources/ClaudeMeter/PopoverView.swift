@@ -15,7 +15,7 @@ struct PopoverView: View {
             HStack {
                 Text("Claude Usage").font(.headline)
                 Spacer()
-                Button { model.probeAll(atMostEvery: 60) } label: { refreshIcon(spinning: !model.running.isEmpty) }
+                Button { model.probeAll(atMostEvery: 60) } label: { refreshIcon(spinning: model.running != nil) }
                     .help("Refresh").accessibilityLabel("Refresh")
                 Button(action: { SettingsWindow.open(openSettings) }) { Image(systemName: "gearshape") }
                     .help("Settings").accessibilityLabel("Settings")
@@ -115,7 +115,7 @@ struct AccountSection: View {
             Text("Rate limited")
         } else if let error = result.error {
             Text(error).lineLimit(2)
-        } else if result.snapshot == nil, model.busy.contains(account.id) {
+        } else if result.snapshot == nil, model.isBusy(account.id) {
             Text("Checking…")
         }
     }

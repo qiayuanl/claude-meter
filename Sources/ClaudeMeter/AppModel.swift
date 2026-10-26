@@ -11,8 +11,8 @@ final class AppModel {
     private(set) var results: [UUID: ProbeResult] = [:]
     /// Accounts that get no usage probes before the given time. In memory only.
     private(set) var rateLimitedUntil: [UUID: Date] = [:]
-    /// Accounts with a `claude` child running.
-    private(set) var running: Set<UUID> = []
+    /// The job whose `claude` child runs.
+    private(set) var running: Job?
     private(set) var currentID: UUID?
     /// Advances every 30 s so time-dependent views refresh.
     private(set) var now = Date()
@@ -22,15 +22,25 @@ final class AppModel {
     @ObservationIgnored private var worker: Task<Void, Never>?
     @ObservationIgnored private var waitingForSignIn: Set<UUID> = []
     @ObservationIgnored private var lastProbeAll = Date.distantPast
-    @ObservationIgnored private var signedInKeys = SessionDetector.KeyCache()
+    /// The tracked account ~/.claude is signed in to, matched by reset times (see `probeHome`).
+    @ObservationIgnored private var homeAccountID: UUID?
+    /// The profile in ~/.claude.json, read when the file's modification date changes.
+    @ObservationIgnored private var homeProfile: GlobalConfig.OAuthAccount?
+    @ObservationIgnored private var homeConfigModified: Date?
 
-    private enum Job: Equatable {
-        case usage(UUID), identity(UUID)
-        var id: UUID { switch self { case .usage(let id), .identity(let id): id } }
+    /// `home` probes ~/.claude, the plain `claude` login.
+    enum Job: Equatable {
+        case usage(UUID), identity(UUID), home
+        var id: UUID? {
+            switch self {
+            case .usage(let id), .identity(let id): id
+            case .home: nil
+            }
+        }
     }
 
-    /// At launch: identities, then usage of every account. Every 5 s: the session files, sign-in checks
-    /// while the Add Account sheet is open, and a probe of all 5 min after the last one.
+    /// At launch: identities, then usage of every account and of ~/.claude. Every 5 s: the session
+    /// files, sign-in checks while the Add Account sheet is open, and a probe of all 5 min after the last one.
     init() {
         state = AppState.load()
         AccountSetup.removeLoginScripts()
@@ -61,8 +71,8 @@ final class AppModel {
         self.now = now
     }
 
-    /// Accounts with a job queued or running.
-    var busy: Set<UUID> { running.union(queue.map(\.id)) }
+    /// True while the account has a job queued or running.
+    func isBusy(_ id: UUID) -> Bool { running?.id == id || queue.contains { $0.id == id } }
 
     var popoverAccounts: [Account] {
         state.accounts.popoverOrder(current: currentID, now: now) { results[$0]?.fresh(at: now) }
@@ -76,11 +86,13 @@ final class AppModel {
         return state.accounts.first { $0.id != account.id && $0.identity?.key == key }
     }
 
-    /// Queues a usage probe of every account unless the last one was less than `interval` ago.
+    /// Queues a usage probe of every account, then of ~/.claude, unless the last round was less than
+    /// `interval` ago. The account matched to ~/.claude is skipped and gets the ~/.claude result.
     func probeAll(atMostEvery interval: TimeInterval = 0) {
         guard Date().timeIntervalSince(lastProbeAll) >= interval else { return }
         lastProbeAll = Date()
-        state.accounts.forEach { enqueue(.usage($0.id)) }
+        state.accounts.filter { $0.id != homeAccountID }.forEach { enqueue(.usage($0.id)) }
+        enqueue(.home)
     }
 
     private func enqueue(_ job: Job) {
@@ -90,17 +102,18 @@ final class AppModel {
         worker = Task {
             while !queue.isEmpty {
                 let job = queue.removeFirst()
-                guard let account = account(job.id), let claude = await Claude.locate() else {
-                    record(job.id, ProbeResult(error: ClaudeError.notFound.localizedDescription))
+                running = job
+                guard let claude = await Claude.locate() else {
+                    job.id.map { record($0, ProbeResult(error: ClaudeError.notFound.localizedDescription)) }
                     continue
                 }
-                running.insert(account.id)
                 switch job {
-                case .usage: await probe(account, with: claude)
-                case .identity: await checkIdentity(account, with: claude)
+                case .usage(let id): if let account = account(id) { await probe(account, with: claude) }
+                case .identity(let id): if let account = account(id) { await checkIdentity(account, with: claude) }
+                case .home: await probeHome(with: claude)
                 }
-                running.remove(account.id)
             }
+            running = nil
             worker = nil
         }
     }
@@ -113,16 +126,37 @@ final class AppModel {
         results[id] = result
     }
 
-    /// Skips an account inside its 15 min rate-limit pause. Usage data for an account without an
-    /// identity, or waiting for sign-in, also queues an identity check.
-    private func probe(_ account: Account, with claude: Claude) async {
-        if let until = rateLimitedUntil[account.id], until > Date() { return }
+    /// Runs `/usage` for the account. Nil inside its 15 min rate-limit pause.
+    private func usage(_ account: Account, with claude: Claude) async -> ProbeResult? {
+        if let until = rateLimitedUntil[account.id], until > Date() { return nil }
         let result = await claude.usage(account)
         rateLimitedUntil[account.id] = result.rateLimited ? Date().addingTimeInterval(15 * 60) : nil
+        return result
+    }
+
+    /// Usage data for an account without an identity, or waiting for sign-in, also queues an identity check.
+    private func probe(_ account: Account, with claude: Claude) async {
+        guard let result = await usage(account, with: claude) else { return }
         record(account.id, result)
         if result.snapshot != nil, account.identity == nil || waitingForSignIn.contains(account.id) {
             enqueue(.identity(account.id))
         }
+    }
+
+    /// Probes ~/.claude and matches it to the one tracked account whose numbers reset at the same
+    /// times, which gets the result. Matching ignores the profile in ~/.claude.json: it can keep an
+    /// old organization after `claude auth login`. The matched account's folder is skipped each
+    /// round, so its numbers can predate a reset; without a match that folder is probed and matching
+    /// runs again. A failed probe keeps the match.
+    private func probeHome(with claude: Claude) async {
+        guard let home = await usage(.home, with: claude)?.snapshot else { return }
+        func match() -> UUID? {
+            let matches = state.accounts.filter { results[$0.id]?.snapshot?.sameAccount(as: home) == true }
+            return matches.count == 1 ? matches[0].id : nil
+        }
+        if match() == nil, let previous = account(homeAccountID) { await probe(previous, with: claude) }
+        homeAccountID = match()
+        if let homeAccountID { record(homeAccountID, ProbeResult(snapshot: home)) }
     }
 
     private func checkIdentity(_ account: Account, with claude: Claude) async {
@@ -135,9 +169,18 @@ final class AppModel {
         if waitingForSignIn.remove(id) != nil || results[id]?.signedOut == true { enqueue(.usage(id)) }
     }
 
+    /// A changed ~/.claude.json profile (a sign-in there) queues a probe of ~/.claude.
     private func pollSessions() {
-        let folders = SessionDetector.scan(accounts: state.accounts, cache: &signedInKeys)
-        currentID = SessionDetector.current(folders: folders, accounts: state.accounts, last: currentID)
+        let config = Account.home.globalConfigPath
+        let modified = (try? FileManager.default.attributesOfItem(atPath: config))?[.modificationDate] as? Date
+        if modified != homeConfigModified {
+            homeConfigModified = modified
+            let profile = GlobalConfig.read(config)?.oauthAccount
+            if profile != homeProfile { homeProfile = profile; enqueue(.home) }
+        }
+        let home = SessionDetector.homeAccount(matched: homeAccountID, profileKey: homeProfile?.key, in: state.accounts)
+        let sessions = SessionDetector.scan(accounts: state.accounts, homeAccount: home)
+        currentID = SessionDetector.current(sessions, accounts: state.accounts, last: currentID)
         if let currentID, currentID != state.lastCurrentAccountID { state.lastCurrentAccountID = currentID }
         if Date().timeIntervalSince(now) >= 30 { now = Date() }
     }
