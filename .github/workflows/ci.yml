@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+      # Xcode 26.3 ships Swift 6.2.4, the toolchain the package is developed with.
+      - run: sudo xcode-select -s /Applications/Xcode_26.3.app && swift --version
+      - run: swift build -c release
+      - run: make test
+      - run: scripts/build-app.sh --zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ClaudeMeter
+          path: build/ClaudeMeter-*.zip*
+          retention-days: 7

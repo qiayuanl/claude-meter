@@ -15,9 +15,20 @@ It turns orange at 80 % and red at 95 %, and shows `–` when there is no data, 
 failed, or the numbers are more than 30 minutes old. The popover lists every account with its
 session, week and per-model limits, reset times, and extra usage when it is enabled.
 
-## Build and install
+## Install
 
-Requires macOS 14 or later and Swift 6 (the Command Line Tools are enough).
+Requires macOS 14 or later on Apple silicon.
+
+1. Download `ClaudeMeter-<version>.zip` from
+   [Releases](https://github.com/qiayuanl/claude-meter/releases) and unzip it.
+2. Move `ClaudeMeter.app` to `/Applications`.
+3. Open it. The app is signed ad hoc and not notarized, so macOS blocks the first open.
+   Allow it in **System Settings > Privacy & Security > Open Anyway**, or run
+   `xattr -dr com.apple.quarantine /Applications/ClaudeMeter.app`.
+
+## Build from source
+
+Requires Swift 6 (the Command Line Tools are enough).
 
 ```sh
 make build     # debug build
@@ -66,6 +77,10 @@ whose reset time has passed counts as 0 %.
 
 State lives in `~/Library/Application Support/ClaudeMeter/state.json` (no secrets). A file
 that cannot be decoded is renamed to `state.json.bad` and the app starts fresh.
+
+## Releasing
+
+`git tag v0.1.0 && git push origin v0.1.0` builds the app and publishes a GitHub release.
 
 ## License
 

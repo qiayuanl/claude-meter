@@ -1,0 +1,22 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    env:
+      VERSION: ${{ github.ref_name }}  # build-app.sh drops the leading "v"
+      BUILD_NUMBER: ${{ github.run_number }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo xcode-select -s /Applications/Xcode_26.3.app && swift --version
+      - run: make test
+      - run: scripts/build-app.sh --zip
+      - run: gh release create "$GITHUB_REF_NAME" --generate-notes build/ClaudeMeter-*.zip build/ClaudeMeter-*.zip.sha256
