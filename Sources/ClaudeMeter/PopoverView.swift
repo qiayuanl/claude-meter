@@ -130,13 +130,13 @@ struct LimitRow: View {
         }
     }
 
-    /// Session: time left, e.g. "in 3 h 46 min", or "Not started". Weekly: e.g. "Sun 12:00 AM".
+    /// Time left, e.g. "in 46 min", "in 3 h 46 min" or "in 2 days 5 h"; "Not started" for an idle session.
     private var reset: String {
-        let isSession = limit.kind == "session"
-        guard let date = limit.resetsAt, date > now else { return isSession ? "Not started" : "" }
-        guard isSession else { return date.formatted(.dateTime.weekday(.abbreviated).hour().minute()) }
+        guard let date = limit.resetsAt, date > now else { return limit.kind == "session" ? "Not started" : "" }
         let minutes = Int((date.timeIntervalSince(now) / 60).rounded(.up))
-        return minutes >= 60 ? "in \(minutes / 60) h \(minutes % 60) min" : "in \(minutes) min"
+        let (days, hours) = (minutes / 1440, minutes % 1440 / 60)
+        if days > 0 { return "in \(days) \(days == 1 ? "day" : "days")" + (hours > 0 ? " \(hours) h" : "") }
+        return hours > 0 ? "in \(hours) h \(minutes % 60) min" : "in \(minutes) min"
     }
 
     var body: some View {
