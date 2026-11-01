@@ -24,7 +24,7 @@ struct PopoverView: View {
             Divider()
             let list = VStack(spacing: 0) {
                 if model.state.accounts.isEmpty {
-                    Text("No accounts. Choose Add Account… to start.")
+                    Text("No accounts. Add one in Settings.")
                         .foregroundStyle(.secondary).padding(.vertical, 10)
                 }
                 ForEach(Array(model.popoverAccounts.enumerated()), id: \.element.id) { index, account in
@@ -43,10 +43,6 @@ struct PopoverView: View {
             }
             Divider()
             HStack(spacing: 14) {
-                Button("Add Account…") {
-                    model.showAddAccount = true
-                    SettingsWindow.open(openSettings)
-                }
                 Button("Settings…", action: { SettingsWindow.open(openSettings) })
                 Spacer()
                 Button("Quit ClaudeMeter") { NSApp.terminate(nil) }
