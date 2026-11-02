@@ -22,6 +22,10 @@ struct PopoverView: View {
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
             Divider()
+            if model.forecast.accounts > 0 {
+                PoolHeader(forecast: model.forecast, now: model.now).padding(.horizontal, 14).padding(.vertical, 8)
+                Divider()
+            }
             let list = VStack(spacing: 0) {
                 if model.state.accounts.isEmpty {
                     Text("No accounts. Add one in Settings.")
@@ -73,8 +77,9 @@ struct AccountSection: View {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(account.name).font(.headline).lineLimit(1)
                     if account.id == model.currentID {
-                        Text("In use").font(.caption2.weight(.medium)).padding(.horizontal, 6)
-                            .padding(.vertical, 1).background(.quaternary, in: Capsule())
+                        tag("In use")
+                    } else if account.id == model.forecast.next {
+                        tag("Next").help("Switch to this account next: it has the most room per hour left before its weekly reset.")
                     }
                     Spacer()
                     Text(account.identity?.plan ?? "").foregroundStyle(.secondary)
@@ -97,6 +102,11 @@ struct AccountSection: View {
             }
             problem(result, now: now).font(.caption).foregroundStyle(.secondary)
         }
+    }
+
+    private func tag(_ text: String) -> some View {
+        Text(text).font(.caption2.weight(.medium)).padding(.horizontal, 6)
+            .padding(.vertical, 1).background(.quaternary, in: Capsule())
     }
 
     /// A caption only when something is wrong or the first probe is pending.
@@ -155,6 +165,79 @@ struct LimitRow: View {
         .font(.callout)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(title), \(Int(percent.rounded())) percent used" + (reset.isEmpty ? "" : ", \(reset)"))
+    }
+}
+
+/// All accounts as one pool: the weekly room left (the bar), the room that even use of each account would
+/// leave (the tick), the daily budget until the tightest refill, and the forecast at your pace. 1 account is one
+/// account's weekly limit.
+struct PoolHeader: View {
+    let forecast: Forecast
+    let now: Date
+
+    private func accounts(_ pp: Double) -> String { String(format: "%.1f", pp / 100) }
+
+    /// "now", "5 PM" or "4:20 PM" today, "Wed 5 PM" within 6 days, else "Nov 8, 2 PM". Rounded to the
+    /// minute, because resets can arrive a fraction of a second before the hour.
+    private func when(_ exact: Date?) -> String {
+        guard let exact, exact > now else { return "now" }
+        let date = Date(timeIntervalSince1970: (exact.timeIntervalSince1970 / 60).rounded() * 60)
+        let calendar = Calendar.current
+        let time: Date.FormatStyle = calendar.component(.minute, from: date) == 0 ? .dateTime.hour() : .dateTime.hour().minute()
+        if calendar.isDate(date, inSameDayAs: now) { return date.formatted(time) }
+        let sixDays = calendar.date(byAdding: .day, value: 6, to: calendar.startOfDay(for: now)) ?? now
+        return date.formatted(date < sixDays ? time.weekday(.abbreviated) : time.month(.abbreviated).day())
+    }
+
+    /// "Up to 1.3 a day until the Wed 5 PM refill", plus ", with 2 refills before it" when earlier resets
+    /// count. Nil when no weekly reset is known.
+    private var refill: String? {
+        guard let refill = forecast.refill else { return nil }
+        let room = refill.room < 1 ? "No room" : "Up to \(accounts(refill.perDay)) a day"
+        let earlier = refill.refills == 0 ? "" : ", with \(refill.refills) refill\(refill.refills == 1 ? "" : "s") before it"
+        return "\(room) until the \(when(refill.date)) refill" + earlier
+    }
+
+    /// Red: runs out at your pace (by that time when only a lower bound of the pace is known). Orange: room
+    /// expires unused at your measured pace. Green: lasts at your measured pace.
+    private var verdict: (text: String, color: Color)? {
+        guard let o = forecast.outcome else { return nil }
+        let bound = forecast.paceIsLowerBound
+        if o.runsOut, let start = o.runOut { return ("Runs out \(bound ? "by " : "")\(when(start)) at your pace", .red) }
+        guard !bound else { return nil }
+        return o.unused > 10 ? ("~\(accounts(o.unused)) expires unused by \(when(o.unusedBy))", .orange)
+            : ("Lasts the week at your pace", .green)
+    }
+
+    var body: some View {
+        let total = Double(forecast.accounts) * 100
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("All accounts").font(.headline)
+                Spacer()
+                Text("\(accounts(forecast.left)) of \(forecast.accounts) left").monospacedDigit()
+            }
+            Capsule().fill(.quaternary).frame(height: 6).overlay(alignment: .leading) {
+                GeometryReader { bar in
+                    Capsule().fill(Color.accentColor).frame(width: bar.size.width * min(1, forecast.left / total))
+                    Rectangle().fill(.primary).frame(width: 2, height: 12)
+                        .offset(x: bar.size.width * min(1, forecast.steadyLeft / total) - 1, y: -3)
+                }
+            }
+            .padding(.vertical, 3)
+            if let refill { Text(refill).font(.caption).foregroundStyle(.secondary) }
+            if let verdict {
+                HStack(spacing: 6) {
+                    Circle().fill(verdict.color).frame(width: 6, height: 6)
+                    Text(verdict.text).foregroundStyle(.secondary)
+                }
+                .font(.caption)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .help("The bar is the weekly room left in all accounts. The tick is the room left if every account "
+              + "had been used at an even rate that reaches 100 % at its weekly reset. The line below is the "
+              + "most you can use per day, on average, without running out before a weekly reset.")
     }
 }
 

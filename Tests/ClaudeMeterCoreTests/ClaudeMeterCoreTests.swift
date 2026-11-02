@@ -245,3 +245,266 @@ private func snapshot(session: Double, sessionReset: Date? = nil, weekly: Double
         #expect(FileManager.default.fileExists(atPath: url.path + ".bad"))
     }
 }
+
+private func at(_ seconds: Double) -> Date { Date(timeIntervalSince1970: seconds) }
+
+private func weeklySnapshot(_ weekly: Double, reset: Date?, asOf: Date, session: Double = 0,
+                            sessionReset: Date? = nil) -> UsageSnapshot {
+    UsageSnapshot(limits: [UsageLimit(kind: "session", percent: session, resetsAt: sessionReset),
+                           UsageLimit(kind: "weekly_all", percent: weekly, resetsAt: reset)], asOf: asOf)
+}
+
+@Suite struct HistoryTests {
+    let t0 = at(1_793_000_000), reset = at(1_793_300_000)
+
+    func total(_ h: UsageHistory) -> Double { h.hourly.values.reduce(0, +) }
+
+    @Test func booksOnlyTheIncreaseInOneWindow() {
+        var h = UsageHistory()
+        h.add(weeklySnapshot(50, reset: reset, asOf: t0), key: "a")
+        #expect(total(h) == 0)
+        h.add(weeklySnapshot(53, reset: reset, asOf: t0 + 5400), key: "a")
+        #expect(abs(total(h) - 3) < 1e-9 && h.hourly.count == 3)
+    }
+
+    @Test func ignoresOlderCopiesAndDips() {
+        var h = UsageHistory()
+        h.add(weeklySnapshot(52, reset: reset, asOf: t0), key: "a")
+        h.add(weeklySnapshot(47, reset: reset, asOf: t0 - 60), key: "a")
+        h.add(weeklySnapshot(51, reset: reset, asOf: t0 + 60), key: "a")
+        h.add(weeklySnapshot(53, reset: reset, asOf: t0 + 120), key: "a")
+        #expect(abs(total(h) - 1) < 1e-9)
+    }
+
+    @Test func aPassedResetBooksTheNewWindowAndMarksAGap() {
+        var h = UsageHistory()
+        h.add(weeklySnapshot(80, reset: reset, asOf: reset - 180), key: "a")
+        h.add(weeklySnapshot(1, reset: reset + UsageHistory.week, asOf: reset + 120), key: "a")
+        #expect(abs(total(h) - 1) < 1e-9 && h.gapAt == nil)
+        h.add(weeklySnapshot(9, reset: reset + UsageHistory.week, asOf: reset + 20 * 3600), key: "b")
+        h.add(weeklySnapshot(4, reset: reset + 2 * UsageHistory.week, asOf: reset + UsageHistory.week + 3600), key: "b")
+        #expect(h.gapAt == reset + UsageHistory.week + 3600)
+        #expect(h.paceIsLowerBound(at: reset + UsageHistory.week + 7200))
+    }
+
+    @Test func aResetThatMovesBeforeItPassesBooksNothing() {
+        var h = UsageHistory()
+        h.add(weeklySnapshot(30, reset: reset, asOf: t0), key: "a")
+        h.add(weeklySnapshot(40, reset: reset + 3600, asOf: t0 + 60), key: "a")
+        #expect(total(h) == 0)
+    }
+
+    @Test func paceNeedsSevenDays() {
+        var h = UsageHistory()
+        for hour in 0...(8 * 24) {
+            h.add(weeklySnapshot(Double(hour % 100), reset: reset + Double(hour / 100) * 3600, asOf: t0 + Double(hour) * 3600), key: "a")
+        }
+        #expect(h.pace(at: t0 + 6 * 86400) == nil)
+        let pace = h.pace(at: t0 + 8 * 86400)
+        #expect(pace.map { abs($0 - 1) < 0.02 } == true)
+    }
+
+    @Test func anAccountFirstSeenMidWeekMarksAGap() {
+        var h = UsageHistory()
+        h.add(weeklySnapshot(10, reset: reset, asOf: t0), key: "a")
+        h.add(weeklySnapshot(0, reset: t0 + 6 * 86400, asOf: t0 + 3600), key: "b")
+        #expect(h.gapAt == nil)
+        h.add(weeklySnapshot(40, reset: t0 + 5 * 86400, asOf: t0 + 3 * 86400), key: "c")
+        #expect(h.gapAt == t0 + 3 * 86400)
+    }
+
+    @Test func learnsSessionSizeFromOneSessionWindow() {
+        var h = UsageHistory()
+        #expect(h.sessionSize == 17)
+        let end = t0 + 4 * 3600
+        h.add(weeklySnapshot(2, reset: reset, asOf: t0, session: 8, sessionReset: end), key: "a")
+        h.add(weeklySnapshot(17, reset: reset, asOf: t0 + 3600, session: 100, sessionReset: end), key: "a")
+        #expect(abs(h.sessionSize - 49 / 2.92) < 1e-9)
+    }
+
+    @Test func patternHasMeanOneAfterAWeek() throws {
+        var h = UsageHistory()
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        #expect(h.pattern(at: t0, calendar: calendar) == nil)
+        for hour in 0...(10 * 24) {
+            let t = t0 + Double(hour) * 3600
+            let busy = calendar.component(.hour, from: t) >= 18
+            h.add(weeklySnapshot(Double(hour) * (busy ? 2 : 1) / 10, reset: reset, asOf: t), key: "a")
+        }
+        let pattern = try #require(h.pattern(at: t0 + 10 * 86400, calendar: calendar))
+        #expect(abs(pattern.reduce(0, +) / 168 - 1) < 1e-9)
+        #expect(pattern[20] > pattern[10])
+    }
+}
+
+/// The 8 accounts at 2026-11-02 03:26 UTC: weekly %, weekly reset, session %, session reset, snapshot time.
+/// Expected numbers come from the Python prototype (flat pattern, session size 17).
+private let fixture: [(String, Double, Double, Double, Double?, Double)] = [
+    ("alpha", 65, 1793840399.56941, 0, nil, 1793589957.656),
+    ("bravo", 65, 1794121200.385537, 98, 1793591400.385513, 1793589956.495),
+    ("charlie", 17, 1794171599.932127, 100, 1793596199.932103, 1793589962.042),
+    ("delta", 65, 1793919599.892516, 0, nil, 1793589958.972),
+    ("echo", 56, 1793905200.241633, 3, 1793606400.241614, 1793589064.318),
+    ("foxtrot", 63, 1794006000.035022, 2, 1793606400.035005, 1793589955.195),
+    ("golf", 93, 1793844000.131441, 0, nil, 1793589963.239),
+    ("hotel", 17, 1794175200.294837, 0, nil, 1793589960.657),
+]
+private let fixtureNow = at(1793589963.239)
+
+private func fixtureData() -> (accounts: [Account], results: [UUID: ProbeResult]) {
+    let accounts = fixture.map { Account(name: $0.0, configDir: "", identity: identity($0.0, "org")) }
+    var results: [UUID: ProbeResult] = [:]
+    for (account, f) in zip(accounts, fixture) {
+        results[account.id] = ProbeResult(snapshot: weeklySnapshot(f.1, reset: at(f.2), asOf: at(f.5), session: f.3,
+                                                                   sessionReset: f.4.map(at)))
+    }
+    return (accounts, results)
+}
+
+@Suite struct ForecastTests {
+    func make(current: String? = nil, history: UsageHistory = UsageHistory()) -> (Forecast, [Account]) {
+        let (accounts, results) = fixtureData()
+        let id = accounts.first { $0.name == current }?.id
+        return (Forecast.make(accounts: accounts, results: results, history: history, current: id, now: fixtureNow), accounts)
+    }
+
+    @Test func matchesThePrototypeOnTheRealSnapshot() throws {
+        let (f, _) = make()
+        #expect(f.accounts == 8 && f.left == 359)
+        let pace = try #require(f.pace)
+        #expect(f.paceIsLowerBound && abs(pace - 4.480143) < 1e-5)
+        #expect(abs(f.steadyLeft - 539.598970) < 1e-5)
+        let o = try #require(f.outcome)
+        #expect(o.short == 0 && o.unused == 0 && !o.runsOut)
+        #expect(!f.alert)
+    }
+
+    @Test func runOutAtAHigherPaceMatchesThePrototype() throws {
+        let (accounts, results) = fixtureData()
+        let simulation = Simulation(lots: Self.lots(accounts, results), start: fixtureNow, sessionSize: 17, pattern: nil,
+                                    calendar: .current)
+        let o = simulation.run(pace: 6)
+        #expect(abs(o.short - 60) < 1e-6 && o.unused == 0)
+        #expect(o.runOut == fixtureNow + 2 * 86400 + 11 * 3600 + 50 * 60)
+    }
+
+    @Test func weeklyOnlyRunOutPaceMatchesTheClosedForm() {
+        let (accounts, results) = fixtureData()
+        let simulation = Simulation(lots: Self.lots(accounts, results), start: fixtureNow, sessionSize: 1e9, pattern: nil,
+                                    calendar: .current)
+        var (low, high) = (0.0, 30.0)
+        for _ in 0..<30 {
+            let mid = (low + high) / 2
+            if simulation.run(pace: mid).short > 0.01 { high = mid } else { low = mid }
+        }
+        let simulated = high
+        // Least over the resets of (room now + refills so far) / hours to that reset.
+        let lots = fixture.map { (reset: at($0.2), room: 100 - $0.1) }.sorted { $0.reset < $1.reset }
+        let room = lots.reduce(0) { $0 + $1.room }
+        let ends = lots.map(\.reset) + [fixtureNow + UsageHistory.week]
+        let exact = ends.enumerated().map { m, end in (room + 100 * Double(m)) / (end.timeIntervalSince(fixtureNow) / 3600) }.min()!
+        #expect(abs(simulated - 5.153254) < 1e-3 && abs(simulated / exact - 1) < 0.002)
+    }
+
+    @Test func theRefillOnTheRealSnapshotIsTheFirstReset() throws {
+        let refill = try #require(make().0.refill)
+        #expect(refill.date == at(1793840399.56941) && refill.refills == 0)
+        #expect(abs(refill.room - 359) < 1e-9)
+        #expect(abs(refill.perDay - 359 / (refill.date.timeIntervalSince(fixtureNow) / 86400)) < 1e-9)
+    }
+
+    @Test func aResetThatRefillsLittleDoesNotHideTheNextOne() throws {
+        let a = Account(name: "a", configDir: ""), b = Account(name: "b", configDir: ""), c = Account(name: "c", configDir: "")
+        var results = [a.id: ProbeResult(snapshot: weeklySnapshot(20, reset: fixtureNow + 2 * 3600, asOf: fixtureNow)),
+                       b.id: ProbeResult(snapshot: weeklySnapshot(90, reset: fixtureNow + 100 * 3600, asOf: fixtureNow))]
+        let refill = try #require(Forecast.make(accounts: [a, b], results: results, history: UsageHistory(),
+                                                current: nil, now: fixtureNow).refill)
+        // a gives one session (17 pp) before its reset and 100 pp after it; b gives its 10 pp.
+        #expect(refill.date == fixtureNow + 100 * 3600 && abs(refill.room - 127) < 1e-9 && refill.refills == 1)
+        #expect(abs(refill.perDay - 127 / (100.0 / 24)) < 1e-9)
+        results[c.id] = ProbeResult(snapshot: weeklySnapshot(50, reset: nil, asOf: fixtureNow))
+        #expect(Forecast.make(accounts: [c], results: results, history: UsageHistory(), current: nil, now: fixtureNow).refill == nil)
+    }
+
+    @Test func nextIsTheUsableAccountWithTheMostRoomPerHour() {
+        func next(current: String) -> String? {
+            let (f, accounts) = make(current: current)
+            return accounts.first { $0.id == f.next }?.name
+        }
+        #expect(next(current: "hotel") == nil)
+        #expect(next(current: "golf") == "hotel")
+        #expect(next(current: "charlie") == "hotel")
+    }
+
+    @Test func oneLoginInTwoFoldersIsOneAccount() {
+        var (accounts, results) = fixtureData()
+        let copy = Account(name: "copy", configDir: "", identity: accounts[0].identity)
+        accounts.append(copy)
+        results[copy.id] = results[accounts[0].id]
+        let f = Forecast.make(accounts: accounts, results: results, history: UsageHistory(), current: nil, now: fixtureNow)
+        #expect(f.accounts == 8 && f.left == 359)
+    }
+
+    @Test func aPassedResetRefillsAndExpiresAWeekLater() {
+        let (accounts, results) = fixtureData()
+        let reset = at(1793840399.56941)
+        let later = Forecast.make(accounts: accounts, results: results, history: UsageHistory(), current: nil, now: reset + 60)
+        #expect(later.left == 359 - 35 + 100)
+        #expect(later.lastReset == reset + UsageHistory.week)
+    }
+
+    @Test func noForecastUntilEveryAccountHasNumbers() {
+        var (accounts, results) = fixtureData()
+        results[accounts[3].id] = nil
+        #expect(Forecast.make(accounts: accounts, results: results, history: UsageHistory(), current: nil, now: fixtureNow).accounts == 0)
+        results[accounts[3].id] = ProbeResult(error: "Not signed in", signedOut: true)
+        #expect(Forecast.make(accounts: accounts, results: results, history: UsageHistory(), current: nil, now: fixtureNow).accounts == 7)
+        accounts.append(Account(name: "new", configDir: ""))
+        results[accounts[8].id] = ProbeResult(error: "Timed out waiting for claude")
+        #expect(Forecast.make(accounts: accounts, results: results, history: UsageHistory(), current: nil, now: fixtureNow).accounts == 0)
+    }
+
+    @Test func aResetAtTheEndOfTheWeekCounts() {
+        let lot = Forecast.Lot(ids: [UUID()], asOf: fixtureNow, used: 50, room: 50, reset: fixtureNow + UsageHistory.week - 60)
+        let simulation = Simulation(lots: [lot], start: fixtureNow, sessionSize: 17, pattern: nil, calendar: .current)
+        #expect(simulation.run(pace: 0).unused == 50)
+    }
+
+    @Test func theAccountInUseKeepsItsPlaceAfterAFailedProbe() {
+        let (accounts, results) = fixtureData()
+        let current = accounts.first { $0.name == "alpha" }!
+        var failed = results
+        failed[current.id]?.error = "Rate limited"
+        let f = Forecast.make(accounts: accounts, results: failed, history: UsageHistory(), current: current.id, now: fixtureNow)
+        #expect(f.next == nil)
+    }
+
+    @Test func theOtherFolderOfTheAccountInUseIsNeverNext() {
+        var (accounts, results) = fixtureData()
+        let best = accounts.first { $0.name == "hotel" }!
+        let twin = Account(name: "twin", configDir: "", identity: best.identity)
+        accounts.append(twin)
+        results[twin.id] = ProbeResult(snapshot: results[best.id]?.snapshot.map { var s = $0; s.asOf -= 60; return s })
+        let f = Forecast.make(accounts: accounts, results: results, history: UsageHistory(), current: twin.id, now: fixtureNow)
+        #expect(f.next == nil)
+    }
+
+    @Test func alertsWhenNoAccountIsUsable() {
+        let (accounts, _) = fixtureData()
+        var results: [UUID: ProbeResult] = [:]
+        for account in accounts {
+            results[account.id] = ProbeResult(snapshot: weeklySnapshot(100, reset: fixtureNow + 86400, asOf: fixtureNow))
+        }
+        let f = Forecast.make(accounts: accounts, results: results, history: UsageHistory(), current: nil, now: fixtureNow)
+        #expect(f.alert && f.next == nil && f.left == 0)
+    }
+
+    static func lots(_ accounts: [Account], _ results: [UUID: ProbeResult]) -> [Forecast.Lot] {
+        zip(accounts, fixture).map { account, f in
+            var lot = Forecast.Lot(ids: [account.id], asOf: at(f.5), used: f.1, room: 100 - f.1, reset: at(f.2))
+            if let end = f.4.map(at), end > fixtureNow { (lot.sessionUsed, lot.sessionEnd) = (17 * f.3 / 100, end) }
+            return lot
+        }
+    }
+}

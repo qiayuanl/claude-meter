@@ -63,6 +63,46 @@ ClaudeMeter runs `/usage` for `~/.claude` and picks the account whose limits res
 times. The profile in `~/.claude.json` is only a fallback, because it can keep an old
 organization after a switch. That account's own folder is not probed in the same round.
 
+## All accounts
+
+The block above the accounts treats all accounts as one pool. It appears once every signed-in
+account has numbers. The unit is one account's weekly limit, so the pool assumes every account
+has the same limit (for example, Team seats of one tier).
+
+- **Bar.** The weekly room left in all accounts, for example `3.6 of 8 left`.
+- **Tick.** The room that even use of each account would leave: each account used at an even
+  rate that reaches 100 % at its weekly reset. An account that resets in 70 hours would have
+  70/168 of its week left.
+- **Daily budget.** `Up to 1.3 a day until the Wed 5 PM refill`: the most you can use per day,
+  on average, without running out before any weekly reset in the next 7 days. For each reset,
+  the room usable before it counts the room now, the refills of earlier resets, and at most one
+  full session (about 17 %) per account per 5 hours; divided by the days until that reset, it
+  gives a budget. The line shows the smallest budget and its reset, so a reset that refills little does
+  not hide a long wait for the next one. When earlier resets count, the line says how many:
+  `…, with 2 refills before it`.
+- **Verdict.** A forecast at your pace: `Runs out Wed 2 PM at your pace` (red),
+  `~0.8 expires unused by Nov 8, 2 PM` (orange) or `Lasts the week at your pace` (green).
+- **Next.** The usable account with the most room per active hour left before its reset. The
+  account in use stays while its numbers leave room, until its session caps, unless the other
+  account's number is 1.5 times larger.
+
+Your pace is the pool's use over the last 7 days. Each probe books an account's weekly increase
+into hourly totals in `history.json`; after 7 days the pace also follows the hour-of-week
+pattern of the last 4 weeks. Before 7 days of history, and for 7 days after use went unbooked
+(a reset passed while the app was not probing, or an account was added in the middle of its
+week), only a lower bound is known: all weekly use in the open windows over the age of the
+oldest window. The verdict then shows only a run-out that the lower bound already reaches
+(`Runs out by …`).
+
+The forecast simulates the next 7 days in 10-minute steps. Each step's use goes to the account
+with the most room per active hour left before its weekly reset; active hours weigh clock hours
+by the hour-of-week pattern, so nights and weekends without use count less. Each account gives
+at most its weekly room and its 5-hour session room. One session holds about 17 % of a week;
+the app learns the exact size from its probes. A reset refills the account, and a reset that
+has passed counts as a full account whose next reset is 7 days later. The pool runs out when
+more than 0.05 account of use cannot be served. The menu bar adds `!` when no account has room
+now or the pool runs out within 24 hours.
+
 ## Data source and rate limits
 
 ClaudeMeter runs the official CLI and never reads credentials or calls Anthropic itself:
@@ -78,8 +118,9 @@ per minute. After a "rate limited" answer it skips that account for 15 minutes. 
 the tooltip is the time Claude Code fetched the numbers (`cachedUsageUtilization.fetchedAtMs`).
 A limit whose reset time has passed counts as 0 %.
 
-State lives in `~/Library/Application Support/ClaudeMeter/state.json` (no secrets). A file
-that cannot be decoded is renamed to `state.json.bad` and the app starts fresh.
+State lives in `~/Library/Application Support/ClaudeMeter/state.json` and the usage history
+in `history.json` next to it (no secrets). A file that cannot be decoded is renamed to
+`<name>.bad` and the app starts fresh.
 
 ## Releasing
 

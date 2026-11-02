@@ -13,9 +13,11 @@ final class AppModel {
     private(set) var rateLimitedUntil: [UUID: Date] = [:]
     /// The job whose `claude` child runs.
     private(set) var running: Job?
-    private(set) var currentID: UUID?
+    private(set) var currentID: UUID? { didSet { if currentID != oldValue { updateForecast() } } }
+    private(set) var history: UsageHistory { didSet { try? history.save() } }
+    private(set) var forecast = Forecast()
     /// Advances every 30 s so time-dependent views refresh.
-    private(set) var now = Date()
+    private(set) var now = Date() { didSet { updateForecast() } }
     var showAddAccount = false
 
     private var queue: [Job] = []
@@ -42,6 +44,7 @@ final class AppModel {
     /// At launch: identities, then usage of every account and of ~/.claude. Every 5 s: the session
     /// files, sign-in checks while the Add Account sheet is open, and a probe of all 5 min after the last one.
     init() {
+        history = UsageHistory.load()
         state = AppState.load()
         AccountSetup.removeLoginScripts()
         currentID = state.lastCurrentAccountID
@@ -65,10 +68,12 @@ final class AppModel {
 
     /// Fixed data for preview images: no files, timers or `claude` children.
     init(demo state: AppState, results: [UUID: ProbeResult], currentID: UUID?, now: Date) {
+        history = UsageHistory()
         self.state = state
         self.results = results
         self.currentID = currentID
         self.now = now
+        updateForecast()
     }
 
     /// True while the account has a job queued or running.
@@ -118,12 +123,20 @@ final class AppModel {
         }
     }
 
-    /// Stores a result for an existing account. A result without a snapshot keeps the previous one.
+    /// Stores a result for an existing account and books its weekly use. A result without a snapshot
+    /// keeps the previous one.
     private func record(_ id: UUID, _ result: ProbeResult) {
-        guard account(id) != nil else { return }
+        guard let account = account(id) else { return }
+        if let snapshot = result.snapshot { history.add(snapshot, key: account.identity?.key ?? id.uuidString) }
         var result = result
         result.snapshot = result.snapshot ?? results[id]?.snapshot
         results[id] = result
+        updateForecast()
+    }
+
+    private func updateForecast() {
+        forecast = Forecast.make(accounts: state.accounts, results: results, history: history,
+                                 current: currentID, now: now)
     }
 
     /// Runs `/usage` for the account. Nil inside its 15 min rate-limit pause.

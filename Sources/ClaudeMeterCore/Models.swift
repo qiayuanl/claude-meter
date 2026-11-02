@@ -152,21 +152,26 @@ public struct AppState: Codable, Sendable, Equatable {
 
     public init() {}
 
-    /// Empty when the file is missing. A file that fails to decode is renamed to state.json.bad.
-    public static func load(from url: URL = Paths.stateFile) -> AppState {
-        guard let data = try? Data(contentsOf: url) else { return AppState() }
-        if let state = try? JSONDecoder().decode(AppState.self, from: data) { return state }
+    /// Empty when the file is missing or fails to decode (see `JSONFile.load`).
+    public static func load(from url: URL = Paths.stateFile) -> AppState { JSONFile.load(from: url) ?? AppState() }
+    public func save(to url: URL = Paths.stateFile) throws { try JSONFile.save(self, to: url) }
+}
+
+enum JSONFile {
+    /// Nil when the file is missing. A file that fails to decode is renamed to <name>.bad.
+    static func load<T: Decodable>(from url: URL) -> T? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        if let value = try? JSONDecoder().decode(T.self, from: data) { return value }
         let bad = url.appendingPathExtension("bad")
         try? FileManager.default.removeItem(at: bad)
         try? FileManager.default.moveItem(at: url, to: bad)
-        return AppState()
+        return nil
     }
 
-    public func save(to url: URL = Paths.stateFile) throws {
-        let folder = url.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    static func save(_ value: some Encodable, to url: URL) throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(self).write(to: url, options: .atomic)
+        try encoder.encode(value).write(to: url, options: .atomic)
     }
 }

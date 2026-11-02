@@ -64,7 +64,7 @@ struct MenuBarLabel: View {
     var body: some View {
         let account = model.account(model.currentID)
         let percent = account.flatMap { model.results[$0.id]?.fresh(at: model.now) }?.tightestPercent(at: model.now)
-        let text = percent.map { "\(Int($0.rounded()))%" } ?? "–"
+        let text = (percent.map { "\(Int($0.rounded()))%" } ?? "–") + (model.forecast.alert ? "!" : "")
         Image(nsImage: Self.render(percent: percent ?? 0, text: text))
             .accessibilityLabel(["Claude usage", account?.name, text].compactMap { $0 }.joined(separator: " "))
     }

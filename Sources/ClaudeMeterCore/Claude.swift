@@ -5,6 +5,7 @@ public enum Paths {
     public static let home = NSHomeDirectory()
     public static let support = URL(fileURLWithPath: home + "/Library/Application Support/ClaudeMeter")
     public static let stateFile = support.appendingPathComponent("state.json")
+    public static let historyFile = support.appendingPathComponent("history.json")
     /// Working directory of every child `claude` process.
     public static let probeDir = support.appendingPathComponent("probe")
     public static let accountsRoot = home + "/.claude-accounts"
